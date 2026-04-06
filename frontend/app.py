@@ -128,9 +128,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(
 # =========================================================================
 with tab1:
     st.title("SensorLens")
-    st.caption(
-        "Manufacturing Anomaly Detection & LLM Explanation — GKN Aerospace Portfolio Project"
-    )
+    st.caption("Manufacturing Anomaly Detection & LLM Explanation")
     st.dataframe(dataset_df, use_container_width=True)
 
     c1, c2, c3 = st.columns(3)
