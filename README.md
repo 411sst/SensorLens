@@ -13,7 +13,7 @@ AI-powered system that detects anomalous sensor readings in manufacturing equipm
 └──────────────┬──────────────┘
                │ HTTP (REST)
 ┌──────────────▼──────────────┐
-│   Render Free (Backend)     │
+│ Oracle Always Free (Backend)│
 │   ├── detector.py           │
 │   │    └── Isolation Forest │
 │   └── explainer.py          │
@@ -31,7 +31,7 @@ AI-powered system that detects anomalous sensor readings in manufacturing equipm
 | LLM inference | Groq API — LLaMA 3.3 70B Versatile |
 | Frontend | Streamlit |
 | Dataset | AI4I 2020 Predictive Maintenance (10k rows) |
-| Backend deploy | Render free tier |
+| Backend deploy | Oracle Always Free |
 | Frontend deploy | Streamlit Cloud |
 
 ## Features
@@ -71,6 +71,24 @@ uvicorn main:app --reload
 
 # In a new terminal — run from the project root
 streamlit run frontend/app.py
+```
+
+## Oracle Deployment Notes
+
+- Deploy backend on an Oracle Always Free Ubuntu VM.
+- Expose the FastAPI app through a reverse proxy (for example, Caddy or Nginx).
+- Set `GROQ_API_KEY` on the VM environment.
+- Point Streamlit Cloud to your backend URL in secrets:
+
+```toml
+BACKEND_URL = "https://api.yourdomain.com"
+```
+
+- Open inbound ports in Oracle networking: 22, 80, 443.
+- Verify backend health after deploy:
+
+```bash
+curl https://api.yourdomain.com/health
 ```
 
 ## Dataset

@@ -7,3 +7,9 @@ venv/
 .venv/
 data/ai4i2020.csv
 frontend/.streamlit/secrets.toml
+
+# Local Claude settings
+.claude/
+
+# Local Oracle migration helpers (keep local, do not push)
+deploy/oracle/
