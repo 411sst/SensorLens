@@ -172,5 +172,8 @@ def query(req: QueryRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         logger.error("Groq query endpoint failed: %s", e)
-        raise HTTPException(status_code=502, detail=str(e))
+        detail = str(e)
+        if "rate limit" in detail.lower():
+            raise HTTPException(status_code=429, detail=detail)
+        raise HTTPException(status_code=502, detail=detail)
 

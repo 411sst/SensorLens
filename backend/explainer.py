@@ -10,10 +10,35 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_BATCH_SIZE = 10
-GROQ_MAX_TOKENS = 3000
-GROQ_QUERY_MAX_TOKENS = 800
+
+def _env_int(name: str, default: int) -> int:
+    """Read a positive integer from environment, with safe fallback."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+        if parsed <= 0:
+            raise ValueError("must be > 0")
+        return parsed
+    except ValueError:
+        logger.warning("Invalid value for %s=%r; using default %d", name, value, default)
+        return default
+
+
+def _is_rate_limited(message: str) -> bool:
+    """Return True when Groq reports a token/rate-limit response."""
+    msg = message.lower()
+    return "rate limit" in msg or "rate_limit_exceeded" in msg
+
+
+GROQ_EXPLAIN_MODEL = os.getenv("GROQ_EXPLAIN_MODEL", "llama-3.3-70b-versatile")
+GROQ_QUERY_MODEL = os.getenv("GROQ_QUERY_MODEL", GROQ_EXPLAIN_MODEL)
+GROQ_BATCH_SIZE = _env_int("GROQ_BATCH_SIZE", 10)
+GROQ_MAX_TOKENS = _env_int("GROQ_EXPLAIN_MAX_TOKENS", 1800)
+GROQ_QUERY_MAX_TOKENS = _env_int("GROQ_QUERY_MAX_TOKENS", 220)
+GROQ_MAX_EXPLAIN_ROWS = _env_int("GROQ_MAX_EXPLAIN_ROWS", 120)
+GROQ_MAX_QUERY_CONTEXT_ROWS = _env_int("GROQ_MAX_QUERY_CONTEXT_ROWS", 8)
 
 EXPLAIN_SYSTEM_PROMPT = (
     "You are an industrial sensor analyst specializing in manufacturing equipment "
@@ -48,14 +73,17 @@ class GroqExplainer:
         Returns:
             List of dicts with row_id and explanation for each anomaly.
         """
+        rows_to_explain = anomaly_rows[:GROQ_MAX_EXPLAIN_ROWS]
+        skipped_rows = anomaly_rows[GROQ_MAX_EXPLAIN_ROWS:]
+
         batches = [
-            anomaly_rows[i : i + GROQ_BATCH_SIZE]
-            for i in range(0, len(anomaly_rows), GROQ_BATCH_SIZE)
+            rows_to_explain[i : i + GROQ_BATCH_SIZE]
+            for i in range(0, len(rows_to_explain), GROQ_BATCH_SIZE)
         ]
 
         all_explanations = []
 
-        for batch in batches:
+        for batch_index, batch in enumerate(batches):
             try:
                 formatted_rows = "\n".join(
                     f"Row {r['row_id']}: {r['air_temp']} | {r['process_temp']} | "
@@ -69,14 +97,14 @@ class GroqExplainer:
                     f"Columns: Air Temp (K) | Process Temp (K) | Rotational Speed (rpm) | "
                     f"Torque (Nm) | Tool Wear (min)\n\n"
                     f"Readings:\n{formatted_rows}\n\n"
-                    f"For each row, provide a 2-3 sentence plain English explanation of why "
+                    f"For each row, provide a concise 1-2 sentence plain English explanation of why "
                     f"this sensor combination is abnormal and what machine condition it may indicate.\n\n"
                     f'Respond ONLY as a valid JSON array with no markdown fencing:\n'
-                    f'[{{"row_id": <id>, "explanation": "<2-3 sentences>"}}]'
+                    f'[{{"row_id": <id>, "explanation": "<1-2 sentences>"}}]'
                 )
 
                 response = self.client.chat.completions.create(
-                    model=GROQ_MODEL,
+                    model=GROQ_EXPLAIN_MODEL,
                     max_tokens=GROQ_MAX_TOKENS,
                     messages=[
                         {"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
@@ -122,10 +150,28 @@ class GroqExplainer:
 
             except Exception as e:
                 logger.error("Groq batch failed: %s", e)
+                fallback = "Explanation unavailable"
+                if _is_rate_limited(str(e)):
+                    fallback = "Explanation skipped due to Groq rate limits. Retry later."
                 for r in batch:
                     all_explanations.append(
-                        {"row_id": r["row_id"], "explanation": "Explanation unavailable"}
+                        {"row_id": r["row_id"], "explanation": fallback}
                     )
+                if _is_rate_limited(str(e)):
+                    for pending_batch in batches[batch_index + 1 :]:
+                        for r in pending_batch:
+                            all_explanations.append(
+                                {"row_id": r["row_id"], "explanation": fallback}
+                            )
+                    break
+
+        for r in skipped_rows:
+            all_explanations.append(
+                {
+                    "row_id": r["row_id"],
+                    "explanation": "Explanation skipped to conserve free-tier token budget.",
+                }
+            )
 
         return all_explanations
 
@@ -145,6 +191,8 @@ class GroqExplainer:
         """
         if cached_result is None:
             raise ValueError("Run analysis first")
+
+        context_rows = max(1, min(context_rows, GROQ_MAX_QUERY_CONTEXT_ROWS))
 
         anomalies = cached_result["anomalies"][:context_rows]
 
@@ -166,12 +214,12 @@ class GroqExplainer:
             f"rotational_speed | torque | tool_wear | score | failure_type):\n"
             f"{formatted_anomaly_rows}\n\n"
             f"Question: {question}\n\n"
-            f"Answer in 3-5 sentences with specific data references where possible."
+            f"Answer in 2-4 sentences with specific data references where possible."
         )
 
         try:
             response = self.client.chat.completions.create(
-                model=GROQ_MODEL,
+                model=GROQ_QUERY_MODEL,
                 max_tokens=GROQ_QUERY_MAX_TOKENS,
                 messages=[
                     {"role": "system", "content": QUERY_SYSTEM_PROMPT},
@@ -181,6 +229,9 @@ class GroqExplainer:
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error("Groq query call failed: %s", e)
+            if _is_rate_limited(str(e)):
+                raise RuntimeError(
+                    "Groq free-tier token limit reached. Retry in a few minutes, "
+                    "or reduce query size."
+                ) from e
             raise RuntimeError(f"Groq query failed: {e}") from e
-# Temporary change
-# Temporary change

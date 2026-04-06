@@ -44,6 +44,8 @@ FEATURE_LABELS = {
     "torque": "Torque [Nm]",
     "tool_wear": "Tool Wear [min]",
 }
+MAX_LLM_EXPLANATION_ROWS = 120
+QUERY_CONTEXT_ROWS = 8
 
 
 # --- Load dataset on startup ---
@@ -159,6 +161,14 @@ with tab2:
         "Number of Estimators (Trees)", 50, 300, 100, 10
     )
     max_samples = st.selectbox("Max Samples", ["auto", 256, 512, 1024])
+    generate_explanations = st.checkbox(
+        "Generate LLM explanations after analysis",
+        value=True,
+        help=(
+            "Disable this to conserve Groq free-tier tokens for Q&A queries. "
+            "You can still inspect anomaly metrics without explanations."
+        ),
+    )
 
     if st.button("Run Analysis", type="primary"):
         if len(features) < 2:
@@ -193,17 +203,31 @@ with tab2:
                 f"({pct:.1f}% of 10,000 rows)."
             )
 
-            try:
-                with st.spinner("Generating LLM explanations..."):
-                    explain_resp = requests.post(
-                        f"{BACKEND_URL}/explain",
-                        json={"anomalies": result["anomalies"]},
-                        timeout=300,
-                    )
-                    explain_resp.raise_for_status()
-                    st.session_state["explanations"] = explain_resp.json()["explanations"]
-            except Exception as e:
-                st.warning(f"LLM explanations unavailable: {_api_error(e)}")
+            if generate_explanations:
+                try:
+                    with st.spinner("Generating LLM explanations..."):
+                        ranked_anomalies = sorted(
+                            result["anomalies"],
+                            key=lambda x: x["anomaly_score"],
+                            reverse=True,
+                        )
+                        explain_resp = requests.post(
+                            f"{BACKEND_URL}/explain",
+                            json={"anomalies": ranked_anomalies[:MAX_LLM_EXPLANATION_ROWS]},
+                            timeout=300,
+                        )
+                        explain_resp.raise_for_status()
+                        st.session_state["explanations"] = explain_resp.json()["explanations"]
+                        if result["anomaly_count"] > MAX_LLM_EXPLANATION_ROWS:
+                            st.info(
+                                "LLM explanations are generated for the top "
+                                f"{MAX_LLM_EXPLANATION_ROWS} most anomalous rows "
+                                "to stay within free-tier token limits."
+                            )
+                except Exception as e:
+                    st.warning(f"LLM explanations unavailable: {_api_error(e)}")
+            else:
+                st.info("Skipped LLM explanations to conserve token budget.")
 
 # =========================================================================
 # TAB 3 — Visualizations
@@ -466,7 +490,7 @@ with tab5:
                 with st.spinner("Thinking..."):
                     resp = requests.post(
                         f"{BACKEND_URL}/query",
-                        json={"question": question, "context_rows": 20},
+                        json={"question": question, "context_rows": QUERY_CONTEXT_ROWS},
                         timeout=30,
                     )
                     resp.raise_for_status()
@@ -477,7 +501,14 @@ with tab5:
                     {"question": question, "answer": answer}
                 )
             except Exception as e:
-                st.error(f"Query failed: {_api_error(e)}")
+                err = _api_error(e)
+                if "rate limit" in err.lower() or "429" in err:
+                    st.warning(
+                        "Groq free-tier token limit reached. Retry in a few minutes, "
+                        "or run a fresh analysis with fewer anomalies."
+                    )
+                else:
+                    st.error(f"Query failed: {err}")
 
     if st.session_state["query_history"]:
         with st.expander("Query History (last 5)"):
