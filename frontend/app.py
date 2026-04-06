@@ -487,4 +487,4 @@ with tab5:
                 st.markdown(f"**Q:** {item['question']}")
                 st.markdown(f"**A:** {item['answer']}")
                 st.divider()
- 
+
