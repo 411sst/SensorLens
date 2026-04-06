@@ -26,7 +26,10 @@ def _api_error(e: Exception) -> str:
     return str(e)
 
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+try:
+    BACKEND_URL = st.secrets["BACKEND_URL"]
+except (KeyError, FileNotFoundError):
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 FEATURE_COLUMNS = [
     "air_temp",
     "process_temp",
@@ -484,14 +487,4 @@ with tab5:
                 st.markdown(f"**Q:** {item['question']}")
                 st.markdown(f"**A:** {item['answer']}")
                 st.divider()
-#   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
- #   T e m p o r a r y   c h a n g e  
  
